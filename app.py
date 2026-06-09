@@ -489,25 +489,49 @@ with d5:
 with d6:
     metric_card("Emergency", len(emergency_log) if emergency_log is not None else 0, "Case log")
 
-tabs = st.tabs(["📌 Allocation", "👤 Lecturer Analysis", "⏱️ Temporary Cover", "📊 Charts", "🔍 Audit", "📥 Export"])
+tabs = st.tabs(["📌 Allocation", "👤 Lecturer Analysis", "⏱️ Temporary & Emergency", "📊 Charts", "🔍 Audit", "📥 Export"])
 
 with tabs[0]:
     st.markdown("### Main Class Allocation")
-    st.dataframe(df_assign, use_container_width=True, height=520)
+    # TUKAR DI SINI: Tukar dataframe kepada HTML biasa
+    st.write(df_assign.to_html(index=False), unsafe_allow_html=True)
 
 with tabs[1]:
     st.markdown("### Lecturer Analysis")
-    st.dataframe(df_summary, use_container_width=True, height=540)
+    st.caption("This view shows the overall semester story: base KS, emergency coverage, temporary cover, and week-by-week workload changes.")
+    st.write(df_summary_enhanced.to_html(index=False), unsafe_allow_html=True)
+    
+    st.markdown("### Weekly Workload Timeline")
+    st.write(weekly_analysis.to_html(index=False), unsafe_allow_html=True)
+    
+    if semester_event_log is not None and not semester_event_log.empty:
+        st.markdown("### Semester Event Notes")
+        st.write(semester_event_log.to_html(index=False), unsafe_allow_html=True)
 
 with tabs[2]:
-    st.markdown("### Temporary Cover Cases")
+    st.markdown("### Temporary Cover and Emergency Cases")
+    st.caption("This tab separates normal temporary cover from emergency replacement, so the analysis shows the full semester story.")
+
+    st.markdown("#### Temporary Cover Cases")
     if df_temp_cover.empty:
-        st.success("No temporary cover cases.")
+        st.write("<b>No temporary cover cases.</b>", unsafe_allow_html=True)
     else:
-        st.warning("There are late-entry lecturers. Early weeks require temporary cover.")
-        st.dataframe(df_temp_cover, use_container_width=True, height=420)
+        st.write(df_temp_cover.to_html(index=False), unsafe_allow_html=True)
+
+    st.markdown("#### Emergency Replacement Cases")
+    if emergency_log is None or emergency_log.empty:
+        st.write("<b>No emergency replacement cases.</b>", unsafe_allow_html=True)
+    else:
+        st.write(emergency_log.to_html(index=False), unsafe_allow_html=True)
+
+    st.markdown("#### Combined Semester Event Notes")
+    if semester_event_log is None or semester_event_log.empty:
+        st.write("<i>No temporary cover or emergency event recorded.</i>", unsafe_allow_html=True)
+    else:
+        st.write(semester_event_log.to_html(index=False), unsafe_allow_html=True)
 
 with tabs[3]:
+    # Bahagian Chart dikekalkan kerana Plotly sudah sedia ada interaktif & cantik
     st.markdown("### Workload Distribution")
     chart_df = df_summary.copy()
     manual_log_for_chart = st.session_state.get("manual_tuning_log", pd.DataFrame())
@@ -527,7 +551,12 @@ with tabs[3]:
     chart_df["manual_out"] = chart_df["manual_out"].fillna(0.0)
     chart_df["manual_in"] = chart_df["manual_in"].fillna(0.0)
     chart_df["jumlah_KS_adjusted"] = (chart_df["jumlah_KS"] - chart_df["manual_out"] + chart_df["manual_in"]).round(2)
-    chart_df["chart_label"] = chart_df["jumlah_KS_adjusted"].astype(str) + " KS | " + chart_df["bil_subjek"].astype(str) + " subjects"
+    if weekly_analysis is not None and not weekly_analysis.empty:
+        avg_cols = ["pensyarah", "average_semester_load", "peak_weekly_load", "average_load_status"]
+        chart_df = chart_df.merge(weekly_analysis[avg_cols], on="pensyarah", how="left")
+        chart_df["jumlah_KS_adjusted"] = chart_df["average_semester_load"].fillna(chart_df["jumlah_KS_adjusted"])
+        chart_df["status_load"] = chart_df["average_load_status"].fillna(chart_df["status_load"])
+    chart_df["chart_label"] = chart_df["jumlah_KS_adjusted"].astype(str) + " avg KS | " + chart_df["bil_subjek"].astype(str) + " subjects"
 
     if px is not None and not chart_df.empty:
         fig = px.bar(
@@ -550,40 +579,27 @@ with tabs[3]:
         )
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.dataframe(chart_df[["pensyarah", "jumlah_KS_adjusted", "bil_subjek"]], use_container_width=True)
+        st.write(chart_df[["pensyarah", "jumlah_KS_adjusted", "bil_subjek"]].to_html(index=False), unsafe_allow_html=True)
 
 with tabs[4]:
     st.markdown("### Audit Check")
     if df_unassigned.empty:
-        st.success("All active classes have been allocated.")
+        st.write("<b style='color:green;'>All active classes have been allocated.</b>", unsafe_allow_html=True)
     else:
-        st.error("Some active classes are unallocated.")
-        st.dataframe(df_unassigned, use_container_width=True)
+        st.write("<b style='color:red;'>Some active classes are unallocated.</b>", unsafe_allow_html=True)
+        st.write(df_unassigned.to_html(index=False), unsafe_allow_html=True)
 
     under = df_summary[df_summary["status_load"] == "UNDERLOAD"]
     over = df_summary[df_summary["status_load"] == "OVERLOAD"]
     if not under.empty:
-        st.warning("Underload lecturers.")
-        st.dataframe(under, use_container_width=True)
+        st.write("<b style='color:orange;'>Underload lecturers.</b>", unsafe_allow_html=True)
+        st.write(under.to_html(index=False), unsafe_allow_html=True)
     if not over.empty:
-        st.error("Overload lecturers.")
-        st.dataframe(over, use_container_width=True)
+        st.write("<b style='color:red;'>Overload lecturers.</b>", unsafe_allow_html=True)
+        st.write(over.to_html(index=False), unsafe_allow_html=True)
 
     st.markdown("### Closed Classes")
-    st.dataframe(df_closed, use_container_width=True, height=300)
-
-with tabs[5]:
-    output = to_excel_bytes({
-        "Status": df_status,
-        "Main_Allocation": df_assign,
-        "Lecturer_Analysis": df_summary,
-        "Temporary_Cover": df_temp_cover,
-        "Emergency_Log": emergency_log,
-        "Manual_Fine_Tuning_Log": st.session_state.get("manual_tuning_log", pd.DataFrame()),
-        "Unallocated_Classes": df_unassigned,
-        "Closed_Classes": df_closed,
-        "Updated_Main_File": df_all,
-    })
+    st.write(df_closed.to_html(index=False), unsafe_allow_html=True)
     st.download_button(
         "📥 Download Full Result Excel",
         data=output,
